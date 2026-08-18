@@ -171,10 +171,20 @@ export interface MessageRoundCursor {
 
 export interface QueryTopicByCursorParams {
   agentId?: string | null;
+  /**
+   * Re-fetch the whole `[anchor, newest]` window instead of resolving a
+   * `roundLimit` page — pass a prior result's `windowStart` when revalidating
+   * after new messages arrived, so the refreshed window still reaches down to the
+   * already-loaded pages (a fresh newest page would slide forward and leave a
+   * round gap above them). Ignored when `cursor` is set.
+   */
+  anchor?: MessageRoundCursor | null;
   /** Hard cap on rows walked when resolving the round window (safety, ~rows). */
   countBudget?: number;
   /** Omit for the initial (newest) page; pass a prior `nextCursor` to load older. */
   cursor?: MessageRoundCursor | null;
+  /** Also join file-derived Work summaries (mirrors `QueryMessageParams.includeFileWorks`). */
+  includeFileWorks?: boolean;
   /** How many rounds to load per page (the current round is always whole). */
   roundLimit?: number;
   sessionId?: string | null;
@@ -187,6 +197,12 @@ export interface TopicMessagesByCursorResult {
   messages: UIChatMessage[];
   /** Cursor to load the previous (older) page, or null when at the topic start. */
   nextCursor: MessageRoundCursor | null;
+  /**
+   * Lower bound of THIS window (lossless microsecond string), even when
+   * `hasMore` is false — clients keep it as the `anchor` for revalidation, since
+   * a JS Date's millisecond precision cannot reconstruct it. Null on empty pages.
+   */
+  windowStart: MessageRoundCursor | null;
 }
 
 /** Default rounds per cursor page. */
@@ -1055,8 +1071,10 @@ export class MessageModel {
   queryTopicMessagesByCursor = async (
     {
       agentId,
+      anchor,
       countBudget = DEFAULT_ROUND_COUNT_BUDGET,
       cursor,
+      includeFileWorks,
       roundLimit = DEFAULT_ROUND_LIMIT,
       sessionId,
       skipWorks,
@@ -1083,17 +1101,15 @@ export class MessageModel {
       this.matchThread(undefined),
     );
 
-    const { lowerBound, hasMore } = await this.resolveRoundWindow({
-      countBudget,
-      cursor,
-      mainlineWhere,
-      roundLimit,
-    });
+    const { lowerBound, hasMore } =
+      anchor && !cursor
+        ? await this.resolveAnchorWindow({ anchor, mainlineWhere })
+        : await this.resolveRoundWindow({ countBudget, cursor, mainlineWhere, roundLimit });
 
     // No lower bound means the window is empty — either the topic has no mainline
     // messages, or a cursor was given and nothing older remains. Return an empty
     // page directly; an unbounded `where` would wrongly reload the entire topic.
-    if (!lowerBound) return { hasMore: false, messages: [], nextCursor: null };
+    if (!lowerBound) return { hasMore: false, messages: [], nextCursor: null, windowStart: null };
 
     // Bound the window on BOTH sides: at/after the resolved round start, and —
     // when paging older — strictly before the cursor. Without the upper bound the
@@ -1106,6 +1122,7 @@ export class MessageModel {
 
     const messages = await this.queryWithWhere({
       current: 0,
+      includeFileWorks,
       pageSize: CURSOR_PAGE_CEILING,
       postProcessUrl: options.postProcessUrl,
       skipWorks,
@@ -1118,7 +1135,36 @@ export class MessageModel {
     });
 
     // `lowerBound.createdAt` is already the lossless microsecond cursor string.
-    return { hasMore, messages, nextCursor: hasMore ? lowerBound : null };
+    return { hasMore, messages, nextCursor: hasMore ? lowerBound : null, windowStart: lowerBound };
+  };
+
+  /**
+   * Resolve the window for an anchor re-fetch: the caller already holds rounds
+   * down to `anchor` (a prior result's `windowStart`) and wants the whole
+   * `[anchor, newest]` window again. Skips round counting entirely — the anchor
+   * IS the lower bound; only probe whether older mainline rows remain below it.
+   */
+  private resolveAnchorWindow = async ({
+    anchor,
+    mainlineWhere,
+  }: {
+    anchor: MessageRoundCursor;
+    mainlineWhere: SQL | undefined;
+  }): Promise<{ hasMore: boolean; lowerBound: MessageRoundCursor }> => {
+    const olderRows = await this.db
+      .select({ id: messages.id })
+      .from(messages)
+      .where(
+        and(
+          this.ownership(),
+          isNull(messages.messageGroupId),
+          mainlineWhere,
+          this.messageStrictlyBefore(anchor),
+        ),
+      )
+      .limit(1);
+
+    return { hasMore: olderRows.length > 0, lowerBound: anchor };
   };
 
   /**

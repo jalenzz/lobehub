@@ -307,4 +307,86 @@ describe('MessageModel.queryTopicMessagesByCursor', () => {
     const full = await messageModel.query({ topicId });
     expect(full.some((m) => m.role === 'compressedGroup' && m.id === `${topicId}-cg`)).toBe(true);
   });
+
+  it('always returns windowStart so exhausted windows can still anchor a revalidate', async () => {
+    const topicId = 't-cursor-window-start';
+    const { ids } = await seedRounds(topicId, 2, 1); // 4 msgs, fits in one page
+
+    const page = await messageModel.queryTopicMessagesByCursor({ topicId, roundLimit: 5 });
+
+    expect(page.hasMore).toBe(false);
+    expect(page.nextCursor).toBeNull();
+    // nextCursor is null once exhausted, but windowStart still names the window's
+    // lower bound — the client's anchor for later whole-window revalidation.
+    expect(page.windowStart).toEqual({ createdAt: expect.any(String), id: ids[0] });
+  });
+
+  // LOBE-13229: revalidating with a fresh roundLimit page after new rounds arrive
+  // slides the newest window forward and opens a gap above already-loaded older
+  // pages. Anchoring on the prior windowStart must re-fetch the whole
+  // [anchor, newest] window instead, gap-free.
+  it('anchor re-fetch returns the whole [anchor, newest] window after new rounds arrive', async () => {
+    const topicId = 't-cursor-anchor';
+    await seedRounds(topicId, 4, 1); // rounds 1..4, 2 msgs each
+
+    const initial = await messageModel.queryTopicMessagesByCursor({ topicId, roundLimit: 2 });
+    expect(initial.messages[0].id).toBe(`${topicId}-u3`);
+    const anchor = initial.windowStart!;
+
+    // Two new rounds arrive after the initial load.
+    await serverDB.insert(messages).values(
+      [5, 6].flatMap((r) => [
+        {
+          content: `q${r}`,
+          createdAt: new Date(2023, 0, 1, 1, r * 2),
+          id: `${topicId}-u${r}`,
+          role: 'user',
+          topicId,
+          userId,
+        },
+        {
+          content: `a${r}.1`,
+          createdAt: new Date(2023, 0, 1, 1, r * 2 + 1),
+          id: `${topicId}-a${r}-1`,
+          role: 'assistant',
+          topicId,
+          userId,
+        },
+      ]),
+    );
+
+    // A fresh roundLimit page would now cover rounds 5..6 only (gap at 3..4). The
+    // anchor re-fetch covers rounds 3..6 — everything from the loaded window start.
+    const revalidated = await messageModel.queryTopicMessagesByCursor({ anchor, topicId });
+    expect(revalidated.messages.map((m) => m.id)).toEqual([
+      `${topicId}-u3`,
+      `${topicId}-a3-1`,
+      `${topicId}-u4`,
+      `${topicId}-a4-1`,
+      `${topicId}-u5`,
+      `${topicId}-a5-1`,
+      `${topicId}-u6`,
+      `${topicId}-a6-1`,
+    ]);
+    // Older rounds (1..2) remain below the anchor; paging older continues from it.
+    expect(revalidated.hasMore).toBe(true);
+    expect(revalidated.nextCursor).toEqual(anchor);
+    expect(revalidated.windowStart).toEqual(anchor);
+  });
+
+  it('anchor at the topic start reports no more history', async () => {
+    const topicId = 't-cursor-anchor-start';
+    const { ids } = await seedRounds(topicId, 2, 1);
+
+    const all = await messageModel.queryTopicMessagesByCursor({ topicId, roundLimit: 5 });
+    expect(all.hasMore).toBe(false);
+
+    const revalidated = await messageModel.queryTopicMessagesByCursor({
+      anchor: all.windowStart!,
+      topicId,
+    });
+    expect(revalidated.messages.map((m) => m.id)).toEqual(ids);
+    expect(revalidated.hasMore).toBe(false);
+    expect(revalidated.nextCursor).toBeNull();
+  });
 });
