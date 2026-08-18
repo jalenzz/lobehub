@@ -44,7 +44,14 @@ import type { AgentSliceState, LoadingState, SaveStatus } from './initialState';
 type AgentMetaUpdate = Partial<
   Pick<
     AgentItem,
-    'avatar' | 'backgroundColor' | 'description' | 'marketIdentifier' | 'name' | 'tags' | 'title'
+    | 'avatar'
+    | 'backgroundColor'
+    | 'description'
+    | 'fullBodyArtwork'
+    | 'marketIdentifier'
+    | 'name'
+    | 'tags'
+    | 'title'
   >
 >;
 type AgencyConfigPatch = PartialDeep<LobeAgentAgencyConfig>;

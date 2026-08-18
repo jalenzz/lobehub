@@ -8,6 +8,7 @@ table agents {
   editor_data jsonb
   avatar text
   background_color text
+  full_body_artwork text
   market_identifier text
   plugins jsonb
   client_id text
