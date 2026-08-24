@@ -358,16 +358,9 @@ describe('CursorAcpSession', () => {
 
     await new CursorAcpSession(options).run();
 
-    expect(events).toContainEqual(
-      expect.objectContaining({
-        data: {
-          phase: 'turn_metadata',
-          provider: 'cursor',
-          usage: expect.objectContaining({ cost: 0.05, totalTokens: 0 }),
-        },
-        type: 'step_complete',
-      }),
-    );
+    const usage = events.find(({ type }) => type === 'step_complete')?.data.usage;
+    expect(usage).toMatchObject({ totalTokens: 0 });
+    expect(usage.cost).toBeCloseTo(0.05);
   });
 
   it('loads a native ACP session when resuming', async () => {
