@@ -25,6 +25,8 @@ import {
   GROK_BUILD_REASONING_EFFORT_FLAGS,
   HETERO_SELECTOR_CAPABILITIES,
   HETEROGENEOUS_AGENT_DEFAULT_SELECTION,
+  applyHeteroSelection,
+  getHeteroSelectorCapability,
   isAmpAgentMode,
   isClaudeCodeReasoningEffort,
   isCodexFastServiceTier,
@@ -163,6 +165,51 @@ export interface HeterogeneousProviderConfig {
   /** Agent runtime type, derived from the shared heterogeneous-agent descriptor catalog. */
   type: HeterogeneousAgentType;
 }
+
+export interface HeterogeneousTopicModel {
+  model: string;
+  provider: string;
+}
+
+export const resolveHeterogeneousProviderTopicModel = (
+  config: HeterogeneousProviderConfig,
+): HeterogeneousTopicModel | undefined => {
+  if (config.authMode === 'api') {
+    return config.apiConfig
+      ? { model: config.apiConfig.model, provider: config.apiConfig.providerId }
+      : undefined;
+  }
+
+  const model = getHeteroSelectorCapability(config.type)?.model?.resolve(config);
+  return model ? { model, provider: config.type } : undefined;
+};
+
+export const applyTopicModelToHeterogeneousProvider = (
+  config: HeterogeneousProviderConfig,
+  topicModel: HeterogeneousTopicModel | undefined,
+): HeterogeneousProviderConfig => {
+  if (!topicModel?.model) return config;
+
+  if (config.authMode === 'api') {
+    if (!topicModel.provider || topicModel.provider === config.type) return config;
+    return {
+      ...config,
+      apiConfig: {
+        model: topicModel.model,
+        providerId: topicModel.provider,
+        ...(config.apiConfig?.providerId === topicModel.provider
+          ? { smallFastModel: config.apiConfig.smallFastModel }
+          : {}),
+      },
+    };
+  }
+
+  if (topicModel.provider !== config.type) return config;
+  return {
+    ...config,
+    ...applyHeteroSelection(config, { model: topicModel.model }),
+  };
+};
 
 const HETEROGENEOUS_AGENT_TYPES = new Set<string>([
   ...HETEROGENEOUS_AGENT_CONFIGS.map(({ type }) => type),
