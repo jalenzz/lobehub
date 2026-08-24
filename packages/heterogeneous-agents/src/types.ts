@@ -300,8 +300,6 @@ export interface ToolCallPayload {
  * this shape. Provider-specific shape knowledge does not leak past the adapter.
  */
 export interface UsageData {
-  /** Authoritative cost reported by the agent for this usage record, in USD. */
-  cost?: number;
   /** Input tokens served from the prompt cache (cache reads). */
   inputCachedTokens?: number;
   /** Input tokens that missed the prompt cache (fresh prompt bytes). */

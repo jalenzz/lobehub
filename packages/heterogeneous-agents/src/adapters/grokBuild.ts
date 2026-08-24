@@ -14,7 +14,6 @@ import type {
   ToolResultData,
   UsageData,
 } from '../types';
-import { toAcpUsageData } from '../utils/acpUsage';
 import {
   acpContentBlockText,
   acpEventIdOf,
@@ -26,10 +25,64 @@ const GROK_BUILD_IDENTIFIER = 'grok-build';
 const GROK_BUILD_AUTH_DOCS_URL =
   getHeterogeneousAgentConfigOrThrow(GROK_BUILD_IDENTIFIER).auth.docsUrl;
 
+interface AcpUsage {
+  cache_creation_input_tokens?: unknown;
+  cache_read_input_tokens?: unknown;
+  cacheCreationInputTokens?: unknown;
+  cacheCreationTokens?: unknown;
+  cachedReadTokens?: unknown;
+  cacheReadInputTokens?: unknown;
+  input_tokens?: unknown;
+  inputTokens?: unknown;
+  output_tokens?: unknown;
+  outputTokens?: unknown;
+  reasoning_tokens?: unknown;
+  reasoningTokens?: unknown;
+  total_tokens?: unknown;
+  totalTokens?: unknown;
+}
+
 interface GrokToolResultState {
   content?: unknown;
   rawOutput?: unknown;
 }
+
+const finiteNumber = (value: unknown): number =>
+  typeof value === 'number' && Number.isFinite(value) ? value : 0;
+
+const toUsageData = (usage: unknown): UsageData | undefined => {
+  if (!isRecord(usage)) return;
+
+  const value = usage as AcpUsage;
+  const input = finiteNumber(value.inputTokens ?? value.input_tokens);
+  const output = finiteNumber(value.outputTokens ?? value.output_tokens);
+  const cached = finiteNumber(
+    value.cacheReadInputTokens ?? value.cachedReadTokens ?? value.cache_read_input_tokens,
+  );
+  const cacheCreation = finiteNumber(
+    value.cacheCreationInputTokens ??
+      value.cacheCreationTokens ??
+      value.cache_creation_input_tokens,
+  );
+  const reasoning = Math.min(output, finiteNumber(value.reasoningTokens ?? value.reasoning_tokens));
+  const totalInput = Math.max(input, cached + cacheCreation);
+  const totalOutput = output;
+  const totalTokens =
+    finiteNumber(value.totalTokens ?? value.total_tokens) || totalInput + totalOutput;
+
+  if (totalTokens === 0) return;
+
+  return {
+    inputCachedTokens: cached || undefined,
+    inputCacheMissTokens: Math.max(0, totalInput - cached - cacheCreation),
+    inputWriteCacheTokens: cacheCreation || undefined,
+    outputReasoningTokens: reasoning || undefined,
+    outputTextTokens: Math.max(0, output - reasoning) || undefined,
+    totalInputTokens: totalInput,
+    totalOutputTokens: totalOutput,
+    totalTokens,
+  };
+};
 
 const stringifyUnknown = (value: unknown): string => {
   if (typeof value === 'string') return value;
@@ -244,7 +297,7 @@ export class GrokBuildAdapter implements AgentEventAdapter {
     // model response. Reaching the next response completion proves that the
     // next model round exists even when it emitted no text/thought chunks.
     const events = this.stream.ensureStream(true);
-    const usage = toAcpUsageData(update.usage);
+    const usage = toUsageData(update.usage);
     this.lastTurnUsage = usage ? { stepIndex: this.stream.stepIndex, usage } : undefined;
     const data: StepCompleteData = {
       phase: 'turn_metadata',
@@ -260,7 +313,7 @@ export class GrokBuildAdapter implements AgentEventAdapter {
     this.settled = true;
 
     const meta = isRecord(result._meta) ? result._meta : undefined;
-    const usage = toAcpUsageData(meta?.usage ?? meta);
+    const usage = toUsageData(meta?.usage ?? meta);
     const model = typeof meta?.modelId === 'string' ? meta.modelId : undefined;
     const turnUsage =
       this.lastTurnUsage?.stepIndex === this.stream.stepIndex

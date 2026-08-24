@@ -10,14 +10,6 @@ import { AcpRpcResponseError, AcpServerRequestError } from './acpStdioClient';
 const AUTH_METHOD = 'cursor_login';
 const TRANSPORT = 'cursor-acp' as const;
 
-const readUsdCost = (value: unknown): number | undefined => {
-  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) return value;
-  if (!isRecord(value) || value.currency !== 'USD') return;
-  return typeof value.amount === 'number' && Number.isFinite(value.amount) && value.amount >= 0
-    ? value.amount
-    : undefined;
-};
-
 export interface CursorAcpTextPromptBlock {
   text: string;
   type: 'text';
@@ -34,9 +26,7 @@ interface CursorAcpSessionResult {
 }
 
 interface CursorAcpPromptResult {
-  cost?: unknown;
   stopReason?: string;
-  usage?: unknown;
 }
 
 interface CursorAcpPermissionOption {
@@ -133,8 +123,6 @@ export class CursorAcpSession extends AcpAgentSession<
   CursorAcpSessionOptions
 > {
   private acceptUpdates = false;
-  private baselineCostUsd?: number;
-  private latestCostUsd?: number;
 
   constructor(options: CursorAcpSessionOptions) {
     super(options, {
@@ -204,7 +192,6 @@ export class CursorAcpSession extends AcpAgentSession<
   protected onBeforePrompt(): void {
     // session/load may replay historical updates before returning. Keep setup
     // notifications gated until the new prompt is about to start.
-    this.baselineCostUsd = this.options.resumeSessionId ? this.latestCostUsd : 0;
     this.acceptUpdates = true;
   }
 
@@ -214,18 +201,9 @@ export class CursorAcpSession extends AcpAgentSession<
 
   protected override async settlePrompt(result: unknown): Promise<void> {
     await this.client.drain();
-    const promptResult = result as CursorAcpPromptResult | undefined;
-    const cumulativeCost =
-      this.latestCostUsd !== undefined &&
-      this.baselineCostUsd !== undefined &&
-      this.latestCostUsd >= this.baselineCostUsd
-        ? this.latestCostUsd - this.baselineCostUsd
-        : undefined;
     await this.pushToPipeline({
-      cost: promptResult?.cost ?? cumulativeCost,
-      stopReason: promptResult?.stopReason,
+      stopReason: (result as CursorAcpPromptResult | undefined)?.stopReason,
       type: 'cursor_prompt_completed',
-      usage: promptResult?.usage,
     });
   }
 
@@ -235,15 +213,9 @@ export class CursorAcpSession extends AcpAgentSession<
   }
 
   protected async handleAgentMessage(message: AcpRpcMessage): Promise<void> {
-    if (message.method !== 'session/update') return;
+    if (!this.acceptUpdates || message.method !== 'session/update') return;
     const params = isRecord(message.params) ? message.params : undefined;
     if (!isRecord(params?.update)) return;
-    if (params.update.sessionUpdate === 'usage_update') {
-      const cost = readUsdCost(params.update.cost);
-      if (cost !== undefined) this.latestCostUsd = cost;
-      return;
-    }
-    if (!this.acceptUpdates) return;
     await this.pushToPipeline(this.normalizeSessionUpdate(params.update));
   }
 
