@@ -34,10 +34,12 @@ interface RpcMessage {
 const createAcpProcess = ({
   askQuestion = false,
   loadError,
+  promptResult = { stopReason: 'end_turn' },
   serverRequest,
 }: {
   askQuestion?: boolean;
   loadError?: { code: number; message: string };
+  promptResult?: Record<string, unknown>;
   serverRequest?: RpcMessage;
 } = {}) => {
   const child = new EventEmitter() as ChildProcess;
@@ -152,14 +154,14 @@ const createAcpProcess = ({
               if (blockingRequest) {
                 send(blockingRequest as Record<string, unknown>);
               } else {
-                send({ id: message.id, result: { stopReason: 'end_turn' } });
+                send({ id: message.id, result: promptResult });
               }
               return;
             }
           }
 
           if (message.id === blockingRequest?.id && message.result && promptRequest) {
-            send({ id: promptRequest.id, result: { stopReason: 'end_turn' } });
+            send({ id: promptRequest.id, result: promptResult });
           }
         });
         return true;
@@ -249,6 +251,52 @@ describe('CursorAcpSession', () => {
     expect(events).toContainEqual(expect.objectContaining({ type: 'agent_runtime_end' }));
     expect(options.onRuntimeStatus).toHaveBeenLastCalledWith(
       expect.objectContaining({ state: 'closed', transport: 'cursor-acp' }),
+    );
+  });
+
+  it('forwards token usage returned by the Cursor ACP prompt response', async () => {
+    const fake = createAcpProcess({
+      promptResult: {
+        cost: { amount: 0.004, currency: 'USD' },
+        stopReason: 'end_turn',
+        usage: {
+          cachedReadTokens: 200,
+          inputTokens: 1000,
+          outputTokens: 80,
+          thoughtTokens: 20,
+          totalTokens: 1080,
+        },
+      },
+    });
+    spawnMock.mockReturnValue(fake.child);
+    vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const options = createSessionOptions();
+    const events: AgentStreamEvent[] = [];
+    options.onEvents = (batch) => {
+      events.push(...batch);
+    };
+
+    await new CursorAcpSession(options).run();
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        data: {
+          phase: 'turn_metadata',
+          provider: 'cursor',
+          usage: {
+            cost: 0.004,
+            inputCachedTokens: 200,
+            inputCacheMissTokens: 800,
+            inputWriteCacheTokens: undefined,
+            outputReasoningTokens: 20,
+            outputTextTokens: 60,
+            totalInputTokens: 1000,
+            totalOutputTokens: 80,
+            totalTokens: 1080,
+          },
+        },
+        type: 'step_complete',
+      }),
     );
   });
 

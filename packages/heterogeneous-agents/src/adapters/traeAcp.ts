@@ -1,11 +1,13 @@
 import type {
   AgentEventAdapter,
   HeterogeneousAgentEvent,
+  StepCompleteData,
   StreamChunkData,
   ToolCallPayload,
   ToolResultData,
   ToolStateChunkData,
 } from '../types';
+import { toAcpUsageData } from '../utils/acpUsage';
 import { AcpStreamLifecycle } from './acpCommon';
 
 const DEFAULT_PROVIDER = 'trae';
@@ -24,6 +26,7 @@ export interface AcpSessionAdapterOptions {
 interface TraeAcpPayload {
   [key: string]: unknown;
   content?: unknown;
+  cost?: unknown;
   input?: unknown;
   kind?: unknown;
   message?: unknown;
@@ -40,6 +43,7 @@ interface TraeAcpPayload {
   title?: unknown;
   toolCallId?: unknown;
   type?: unknown;
+  usage?: unknown;
 }
 
 interface TraeAcpToolContent {
@@ -128,7 +132,9 @@ export class TraeAcpAdapter implements AgentEventAdapter {
       if (typeof raw.model === 'string') this.model = raw.model;
       return [];
     }
-    if (raw.type === `${this.eventPrefix}_prompt_completed`) return this.complete(raw.stopReason);
+    if (raw.type === `${this.eventPrefix}_prompt_completed`) {
+      return this.complete(raw.stopReason, raw.usage, raw.cost);
+    }
     if (raw.type === `${this.eventPrefix}_error`) {
       return this.fail(stringify(raw.message) || `${this.provider} ACP failed`);
     }
@@ -268,13 +274,28 @@ export class TraeAcpAdapter implements AgentEventAdapter {
     return events;
   }
 
-  private complete(stopReason: unknown): HeterogeneousAgentEvent[] {
+  private complete(
+    stopReason: unknown,
+    usageValue?: unknown,
+    reportedCost?: unknown,
+  ): HeterogeneousAgentEvent[] {
     if (this.terminal) return [];
     this.terminal = true;
+    const usage = toAcpUsageData(usageValue, reportedCost);
     const runtimeEndData =
       stopReason === 'cancelled' ? { reason: 'interrupted', stopReason } : { stopReason };
     return [
       ...this.closePending(),
+      ...(usage
+        ? [
+            this.stream.event('step_complete', {
+              ...(this.model ? { model: this.model } : {}),
+              phase: 'turn_metadata',
+              provider: this.provider,
+              usage,
+            } satisfies StepCompleteData),
+          ]
+        : []),
       ...this.stream.closeStream({ stopReason }),
       this.stream.event('visible_output_end', {}),
       this.stream.event('agent_runtime_end', runtimeEndData),

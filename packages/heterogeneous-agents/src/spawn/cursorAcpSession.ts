@@ -26,7 +26,9 @@ interface CursorAcpSessionResult {
 }
 
 interface CursorAcpPromptResult {
+  cost?: unknown;
   stopReason?: string;
+  usage?: unknown;
 }
 
 interface CursorAcpPermissionOption {
@@ -201,9 +203,12 @@ export class CursorAcpSession extends AcpAgentSession<
 
   protected override async settlePrompt(result: unknown): Promise<void> {
     await this.client.drain();
+    const promptResult = result as CursorAcpPromptResult | undefined;
     await this.pushToPipeline({
-      stopReason: (result as CursorAcpPromptResult | undefined)?.stopReason,
+      cost: promptResult?.cost,
+      stopReason: promptResult?.stopReason,
       type: 'cursor_prompt_completed',
+      usage: promptResult?.usage,
     });
   }
 
