@@ -3436,12 +3436,12 @@ describe('ConversationLifecycle actions', () => {
                 hasMore: false,
                 items: [
                   {
-                    createdAt: new Date(),
+                    createdAt: Date.now(),
                     id: TEST_IDS.TOPIC_ID,
                     model: 'topic-model',
                     provider: 'cursor',
                     title: 'Topic A',
-                    updatedAt: new Date(),
+                    updatedAt: Date.now(),
                   },
                 ],
                 pageSize: 20,
