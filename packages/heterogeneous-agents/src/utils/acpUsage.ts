@@ -27,18 +27,20 @@ export const toAcpUsageData = (
   usage: unknown,
   reportedCost?: unknown,
 ): UsageData | undefined => {
-  if (!isRecord(usage)) return;
+  const value = isRecord(usage) ? usage : {};
+  const cost = readUsdCost(reportedCost ?? value.cost);
+  if (!isRecord(usage) && cost === undefined) return;
 
-  const input = firstNumber(usage, ['inputTokens', 'input_tokens']) ?? 0;
-  const output = firstNumber(usage, ['outputTokens', 'output_tokens']) ?? 0;
+  const input = firstNumber(value, ['inputTokens', 'input_tokens']) ?? 0;
+  const output = firstNumber(value, ['outputTokens', 'output_tokens']) ?? 0;
   const cached =
-    firstNumber(usage, [
+    firstNumber(value, [
       'cacheReadInputTokens',
       'cachedReadTokens',
       'cache_read_input_tokens',
     ]) ?? 0;
   const cacheCreation =
-    firstNumber(usage, [
+    firstNumber(value, [
       'cacheCreationInputTokens',
       'cacheCreationTokens',
       'cachedWriteTokens',
@@ -46,7 +48,7 @@ export const toAcpUsageData = (
     ]) ?? 0;
   const reasoning = Math.min(
     output,
-    firstNumber(usage, [
+    firstNumber(value, [
       'reasoningTokens',
       'reasoning_tokens',
       'thoughtTokens',
@@ -56,9 +58,8 @@ export const toAcpUsageData = (
   const totalInputTokens = Math.max(input, cached + cacheCreation);
   const totalOutputTokens = output;
   const totalTokens =
-    firstNumber(usage, ['totalTokens', 'total_tokens']) ??
+    firstNumber(value, ['totalTokens', 'total_tokens']) ??
     totalInputTokens + totalOutputTokens;
-  const cost = readUsdCost(reportedCost ?? usage.cost);
 
   if (totalTokens === 0 && cost === undefined) return;
 

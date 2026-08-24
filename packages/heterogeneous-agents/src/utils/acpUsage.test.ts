@@ -56,4 +56,13 @@ describe('toAcpUsageData', () => {
     expect(toAcpUsageData(undefined)).toBeUndefined();
     expect(toAcpUsageData({ inputTokens: -1, outputTokens: Number.NaN })).toBeUndefined();
   });
+
+  it('keeps an authoritative cost when ACP does not report token usage', () => {
+    expect(toAcpUsageData(undefined, { amount: 0.05, currency: 'USD' })).toMatchObject({
+      cost: 0.05,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      totalTokens: 0,
+    });
+  });
 });

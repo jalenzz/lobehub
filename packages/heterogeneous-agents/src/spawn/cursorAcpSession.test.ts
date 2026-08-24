@@ -36,11 +36,13 @@ const createAcpProcess = ({
   loadError,
   promptResult = { stopReason: 'end_turn' },
   serverRequest,
+  usageCosts,
 }: {
   askQuestion?: boolean;
   loadError?: { code: number; message: string };
   promptResult?: Record<string, unknown>;
   serverRequest?: RpcMessage;
+  usageCosts?: { afterPrompt?: number; beforePrompt?: number };
 } = {}) => {
   const child = new EventEmitter() as ChildProcess;
   const stdout = new PassThrough();
@@ -101,10 +103,38 @@ const createAcpProcess = ({
               return;
             }
             case 'session/new': {
+              if (usageCosts?.beforePrompt !== undefined) {
+                send({
+                  method: 'session/update',
+                  params: {
+                    sessionId: 'cursor-session-1',
+                    update: {
+                      cost: { amount: usageCosts.beforePrompt, currency: 'USD' },
+                      sessionUpdate: 'usage_update',
+                      size: 200_000,
+                      used: 0,
+                    },
+                  },
+                });
+              }
               send({ id: message.id, result: { sessionId: 'cursor-session-1' } });
               return;
             }
             case 'session/load': {
+              if (!loadError && usageCosts?.beforePrompt !== undefined) {
+                send({
+                  method: 'session/update',
+                  params: {
+                    sessionId: 'cursor-session-1',
+                    update: {
+                      cost: { amount: usageCosts.beforePrompt, currency: 'USD' },
+                      sessionUpdate: 'usage_update',
+                      size: 200_000,
+                      used: 50_000,
+                    },
+                  },
+                });
+              }
               send(
                 loadError ? { error: loadError, id: message.id } : { id: message.id, result: {} },
               );
@@ -122,6 +152,20 @@ const createAcpProcess = ({
                   },
                 },
               });
+              if (usageCosts?.afterPrompt !== undefined) {
+                send({
+                  method: 'session/update',
+                  params: {
+                    sessionId: 'cursor-session-1',
+                    update: {
+                      cost: { amount: usageCosts.afterPrompt, currency: 'USD' },
+                      sessionUpdate: 'usage_update',
+                      size: 200_000,
+                      used: 51_000,
+                    },
+                  },
+                });
+              }
               if (askQuestion) {
                 send({
                   method: 'session/update',
@@ -294,6 +338,32 @@ describe('CursorAcpSession', () => {
             totalOutputTokens: 80,
             totalTokens: 1080,
           },
+        },
+        type: 'step_complete',
+      }),
+    );
+  });
+
+  it('attributes the delta of cumulative ACP session cost to a resumed prompt', async () => {
+    const fake = createAcpProcess({
+      usageCosts: { afterPrompt: 1.25, beforePrompt: 1.2 },
+    });
+    spawnMock.mockReturnValue(fake.child);
+    vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const options = createSessionOptions({ resumeSessionId: 'cursor-session-old' });
+    const events: AgentStreamEvent[] = [];
+    options.onEvents = (batch) => {
+      events.push(...batch);
+    };
+
+    await new CursorAcpSession(options).run();
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        data: {
+          phase: 'turn_metadata',
+          provider: 'cursor',
+          usage: expect.objectContaining({ cost: 0.05, totalTokens: 0 }),
         },
         type: 'step_complete',
       }),
