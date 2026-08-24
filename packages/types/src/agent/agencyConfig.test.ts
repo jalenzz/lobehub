@@ -88,14 +88,14 @@ describe('pruneWorkingDirByDeviceDeletes', () => {
 });
 
 describe('heterogeneous topic models', () => {
-  it('snapshots the effective CLI model, including native args and Default', () => {
+  it('snapshots the persisted selector and Default', () => {
     expect(
       resolveHeterogeneousProviderTopicModel({
         args: ['--model', 'cursor-arg-model'],
         model: 'stale-structured-model',
         type: 'cursor',
       }),
-    ).toEqual({ model: 'cursor-arg-model', provider: 'cursor' });
+    ).toEqual({ model: 'stale-structured-model', provider: 'cursor' });
     expect(resolveHeterogeneousProviderTopicModel({ type: 'cursor' })).toEqual({
       model: HETEROGENEOUS_AGENT_DEFAULT_SELECTION,
       provider: 'cursor',

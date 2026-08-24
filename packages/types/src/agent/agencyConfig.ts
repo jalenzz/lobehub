@@ -20,13 +20,13 @@ import type {
   QoderReasoningEffort,
 } from './heteroSelectorCapabilities';
 import {
+  applyHeteroSelection,
   CODEX_REASONING_EFFORT_CONFIG_KEY,
   CODEX_SERVICE_TIER_CONFIG_KEY,
+  getHeteroSelectorCapability,
   GROK_BUILD_REASONING_EFFORT_FLAGS,
   HETERO_SELECTOR_CAPABILITIES,
   HETEROGENEOUS_AGENT_DEFAULT_SELECTION,
-  applyHeteroSelection,
-  getHeteroSelectorCapability,
   isAmpAgentMode,
   isClaudeCodeReasoningEffort,
   isCodexFastServiceTier,

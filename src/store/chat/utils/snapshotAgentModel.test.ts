@@ -51,7 +51,7 @@ describe('snapshotAgentModel', () => {
     expect(snapshotAgentModel(id)).toEqual({ model: 'default', provider: 'codex' });
   });
 
-  it('snapshots a heterogeneous model encoded in native args', () => {
+  it('snapshots the persisted heterogeneous selector instead of legacy native args', () => {
     const id = seedAgent('cursor-with-model-arg', {
       agencyConfig: {
         heterogeneousProvider: {
@@ -62,7 +62,7 @@ describe('snapshotAgentModel', () => {
       },
     });
 
-    expect(snapshotAgentModel(id)).toEqual({ model: 'composer-2', provider: 'cursor' });
+    expect(snapshotAgentModel(id)).toEqual({ model: 'stale-model', provider: 'cursor' });
   });
 
   it('snapshots a heterogeneous API binding', () => {
